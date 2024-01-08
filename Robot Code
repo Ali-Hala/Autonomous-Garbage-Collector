@@ -1,0 +1,339 @@
+#include "PC_FileIO.c"
+ 
+const float ULTRA_DETECT = 18;
+const int PASS_WIDTH = 15;
+const int WHEEL_RADIUS_CM = 2.75;
+ 
+void go(int power);
+int cmToEncoder(float cm);
+void config();
+void drive_dist(float distance);
+void turn180(int cw);
+void turnCar(int speed, int angle, int cw);
+int return_to_origin(int passes, float room_length, int initial_enc);
+void dump(bool stuck);
+void stuck();
+void consume();
+ 
+task main()
+{
+	config();
+	TFileHandle fin;
+	bool fileOkay = openReadPC(fin,"fileRead.txt");
+	if (!fileOkay)
+	{
+		displayString(3, "Error opening file");
+		wait1Msec(1000);
+	}
+ 
+	else
+	{
+	float room_length = 0, width = 0;
+	readFloatPC(fin, room_length);
+	readFloatPC(fin, width);
+	int passes = floor(width/PASS_WIDTH);
+	displayString(1, "Length = %f cms", room_length);
+	displayString(2, "Width = %f cms", width);
+	displayString(3, "Passes = %d ", passes);
+	displayString(4, "PRESS ENTER TO START ");
+ 
+	while(!getButtonPress(buttonEnter))
+	{}
+	while(getButtonPress(buttonEnter))
+	{}
+	int current_pass = 1;
+	time1[T1] = 0;
+	nMotorEncoder[motorB] = 0;
+	int initial_enc = 0;
+ 
+	while(current_pass < passes)
+	{
+		go(50);
+		displayString(7, "%d", current_pass);
+ 
+		if((nMotorEncoder[motorB] - initial_enc) < cmToEncoder(room_length)) // might have to reset encoder after every pass????????????????????????????????
+		{
+			if (SensorValue[S2] < ULTRA_DETECT)
+			{
+				consume();
+			}
+			stuck();
+		}
+		else
+		{
+			go(0);
+			int cw = -1;
+			if (current_pass%2 == 0)
+			{
+				cw=1;
+			}
+			displayString(6, "TURNING 180");
+			turn180(cw);
+			current_pass++;
+			initial_enc = nMotorEncoder[motorB];
+			go(0);
+			wait1Msec(1000);
+			go(50);
+		}
+	}
+ 
+	int secsToClean = return_to_origin(current_pass, room_length, initial_enc);
+	wait1Msec(1000);
+	dump(false);
+	wait1Msec(1000);
+	}
+ 
+	displayString(1, " ");
+	displayString(2, " ");
+	displayString(3, " ");
+	displayString(4, " ");
+	displayString(5, " ");
+	displayString(6, "ALL DONE ;)");
+	displayString(7, "In %d seconds", secsToClean);
+	displayString(8, " ");
+	displayString(9, " ");
+	displayString(10, " ");
+	wait1Msec(5000);
+}
+ 
+void go(int power)
+{
+	motor[motorB] = power;
+}
+ 
+int cmToEncoder(float cm)
+{
+	return cm*(360.0/(2.0*PI*WHEEL_RADIUS_CM));
+}
+ 
+void config()
+{
+	SensorType[S1] = sensorEV3_Touch;
+	wait1Msec(50);
+	SensorType[S2] = sensorEV3_Ultrasonic;
+	wait1Msec(50);
+	SensorType[S3] = sensorEV3_Color;
+	wait1Msec(50);
+	SensorMode[S3] = modeEV3Color_Color;
+	wait1Msec(100);
+	SensorType[S4] = sensorEV3_Gyro;
+	wait1Msec(50);
+	SensorMode[S4] = modeEV3Gyro_Calibration;
+	wait1Msec(100);
+	SensorMode[S4] = modeEV3Gyro_RateAndAngle;
+	wait1Msec(50);
+	clearTimer(T1);
+	clearTimer(T2);
+	return;
+}
+ 
+void drive_dist(float distance)
+{
+	int initial_enc = nMotorEncoder[motorB];
+	int enc_limit = distance*(360/(2*PI*2.75));
+	go(60);
+	while (nMotorEncoder[motorB]-initial_enc < enc_limit)
+	{}
+	go(0);
+}
+ 
+void turn180(int cw)
+{
+ int compensation = 0;
+	if(cw == -1)
+	{
+		compensation = 80;
+	}
+	else
+	{
+		compensation = 80;
+	}
+	float gyro_angle = SensorValue[S4];
+	go(0);
+	nMotorEncoder[motorC] = 0;
+	motor[motorC] = cw*60;
+	while(fabs(nMotorEncoder[motorC]) < 35)
+	{}
+ 
+	motor[motorC] = 0;
+	wait1Msec(50);
+ 
+	go(25);
+	while(fabs(SensorValue[S4] - gyro_angle) < 90 )
+	{}
+	go(0);
+	wait1Msec(50);
+	nMotorEncoder[motorC] = 0;
+	motor[motorC] = cw*60 * (-1);
+ 
+	while(fabs(nMotorEncoder[motorC]) < 90)  //double 45
+	{}
+ 
+	motor[motorC] = 0;
+	wait1Msec(50);
+	gyro_angle = SensorValue[S4];
+	go(-25);
+	while(fabs(SensorValue[S4] - gyro_angle) < compensation)
+	{}
+	go(0);
+	wait1Msec(50);
+ 
+	nMotorEncoder[motorC] = 0;
+	motor[motorC] = cw*60;
+	while(fabs(nMotorEncoder[motorC]) < 55)
+	{}
+	motor[motorC] = 0;
+	if(cw == -1)
+	{
+		drive_dist(10);
+	}
+}
+ 
+void turnCar(int speed, int angle, int cw)
+{
+	displayString(1, "FUNC TURN CAR");
+	float gyro_angle = SensorValue[S4];
+	go(0);
+	motor[motorC] = 0;
+	nMotorEncoder[motorC] = 0;
+	motor[motorC] = cw*speed;
+	while(abs(nMotorEncoder[motorC]) <  50)
+	{}
+	motor[motorC] = 0;
+	wait1Msec(50);
+	go(50);
+ 
+	displayString(1, "TURNING");
+ 
+	while(fabs(SensorValue[S4] - gyro_angle) < 210 - angle)
+	{
+		displayString(8, "%f", 270-angle);
+	}
+ 
+	wait1Msec(3000);
+	go(0);
+	nMotorEncoder[motorC] = 0;
+	motor[motorC] = (cw * speed) * (-1);
+	while(fabs(nMotorEncoder[motorC]) < 50)
+	{}
+	motor[motorC]=0;
+	return;
+}
+ 
+int return_to_origin(int passes, float room_length, int initial_enc)
+{
+ 
+ 	time1[T2] = 0;
+	int angle = 0;
+	displayString(9, "Returning to Origin");
+	if (passes%2 != 0)
+	{
+		angle = atan2(cmToEncoder(PASS_WIDTH*passes), (nMotorEncoder(motorB)-initial_enc));
+		int turn_angle = 180 - angle; // encoder is too large
+		turnCar(20, turn_angle, 1);
+	}
+	else
+	{
+		//angle = atan2(cmToEncoder(PASS_WIDTH*passes), cmToEncoder(room_length)-(nMotorEncoder(motorB)-initial_enc));
+		angle =   atan2(cmToEncoder(PASS_WIDTH*passes), (nMotorEncoder(motorB)-initial_enc));
+		turnCar(20, angle, -1);
+	}
+ 
+	wait1Msec(50);
+	go(50);
+	bool proceed = true;
+	displayString(13, "SEARCHING");
+	while(proceed)
+	{
+		if(SensorValue[S3] == 23 && SensorValue[S3] == 24)
+		{
+			proceed = false;
+			displayString(2, "DONE SEARCHING");
+			wait1Msec(5000);
+		}
+		else if(time1[T2] > 15000)
+		{
+			proceed = false;
+			displayString(2, "IM LOST %d", time1[T2]);
+			wait1Msec(5000);
+		}
+	}
+	go(0);
+	displayString(2, "I MADE IT OUT");
+	return time1[T2]/1000;
+}
+ 
+ 
+void dump(bool stuck) //
+function changes if its to dump or if opening mouth to get unstuck.
+{
+	if(stuck != true)
+	{
+		drive_dist(10);
+	}
+	motor[motorA] = -20;
+	motor[motorD] = 20;
+	while(nMotorEncoder[motorD] < 130)
+	{}
+	motor[motorA] = motor[motorD] = 0;
+	wait1Msec(1000);
+}
+ 
+void stuck()
+{
+		const float REG_SPEED = 0.3;
+		int delayTime = 0;
+		while (time1[T1]-delayTime < 1000)
+		{}
+ 
+		int beg_time = time1[T1];
+		int beg_enc = nMotorEncoder[motorB];
+ 
+		while (time1[T1]-beg_time < 1000)
+		{}
+		float speed = 1;
+		int end_time = time1[T1];
+		int end_enc = nMotorEncoder[motorA];
+	  	speed = fabs(((float)(end_enc - beg_enc))/((float)(end_time-beg_time)));
+		displayString(1, "Speed = %f", speed);
+ 
+		if (speed < REG_SPEED)
+		{
+			go(0);
+			displayString(6, "STUCK");
+			dump(true);
+ 
+ 
+			displayString(4, "Press enter to continue cleaning");
+			while(!getButtonPress(buttonEnter))
+			{}
+			while(getButtonPress(buttonEnter))
+			{}
+			motor[motorA] = 5;
+			motor[motorD] = -5;
+			while(nMotorEncoder[motorD] > 0)
+			{}
+			motor[motorA] = motor[motorD] = 0;
+		}
+}
+ 
+void consume()
+{
+go(0);
+	wait1Msec(1000);
+	motor[motorA] = -20;
+	motor[motorD] = 20;
+	while(nMotorEncoder[motorD] < 130)
+	{}
+	motor[motorA] = motor[motorD] = 0;
+	go(20);
+	wait1Msec(2000);
+	go(0);
+	wait1Msec(1000);
+	motor[motorA] = 5;
+	motor[motorD] = -5;
+	while(nMotorEncoder[motorD] > 0)
+	{}
+	motor[motorA] = motor[motorD] = 0;
+	go(20);
+}
